@@ -75,8 +75,7 @@ typedef struct _buff_t {
         uptrint_t flags;
         jl_value_t *type; // 16-bytes aligned
         struct {
-            uintptr_t gc_bits_low:1;
-            uintptr_t pooled:1;
+            uintptr_t gc_bits_low:2;
             uintptr_t gc_bits:2;
         };
     };
@@ -651,7 +650,7 @@ inline void gc_setmark_buf(void *o, int mark_mode)
     gc_setmark_big(buf, mark_mode);
     return;
 #endif
-    if (buf->pooled)
+    if (find_region(buf, 1))
         gc_setmark_pool(buf, mark_mode);
     else
         gc_setmark_big(buf, mark_mode);
@@ -2236,17 +2235,14 @@ void *allocb(size_t sz)
 #ifdef MEMDEBUG
     b = (buff_t*)alloc_big(allocsz);
     b->header = 0x4EADE800;
-    b->pooled = 0;
 #else
     if (allocsz > GC_MAX_SZCLASS + sizeof(buff_t)) {
         b = (buff_t*)alloc_big(allocsz);
         b->header = 0x4EADE800;
-        b->pooled = 0;
     }
     else {
         b = (buff_t*)pool_alloc(&pools[szclass(allocsz)]);
         b->header = 0x4EADE800;
-        b->pooled = 1;
     }
 #endif
     return &b->data[0];
