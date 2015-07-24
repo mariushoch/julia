@@ -155,6 +155,7 @@ export
 # Exceptions
     ArgumentError,
     DimensionMismatch,
+    CompositeException,
     EOFError,
     ErrorException,
     KeyError,

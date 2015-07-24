@@ -199,14 +199,17 @@ ntasks = 10
 rr_list = [RemoteRef() for x in 1:ntasks]
 a=ones(2*10^5);
 for rr in rr_list
+#    println(hex(object_id(rr)))
     @async let rr=rr
         try
             for i in 1:10
                 @test a == remotecall_fetch(id_other, (x)->x, a)
                 yield()
             end
+#            println("OK:", hex(object_id(rr)))
             put!(rr, :OK)
         catch
+#            println("ERR:", hex(object_id(rr)))
             put!(rr, :ERROR)
         end
     end
@@ -215,7 +218,21 @@ end
 @test [fetch(rr) for rr in rr_list] == [:OK for x in 1:ntasks]
 
 # make sure exceptions propagate when waiting on Tasks
-@test_throws ErrorException (@sync (@async error("oops")))
+@test_throws CompositeException (@sync (@async error("oops")))
+try
+    @sync begin
+        for i in 1:5
+            @async error(i)
+        end
+    end
+catch ex
+    @test isa(ex, CompositeException)
+    @test length(ex) == 5
+    @test isa(ex.exceptions[1].ex, ErrorException)
+    errors = map(x->x.ex.msg, ex.exceptions)
+    @test collect(1:5) == sort(map(x->parse(Int, x), errors))
+end
+
 
 try
     remotecall_fetch(id_other, ()->throw(ErrorException("foobar")))

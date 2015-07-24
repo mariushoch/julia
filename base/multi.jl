@@ -619,7 +619,7 @@ type RemoteException <: Exception
 end
 
 function show(io::IO, ex::RemoteException)
-    print("RemoteException on worker ", ex.pid, ": ", ex.err, "\nRemote backtrace:\n", ex.bt, "\n")
+    print("RemoteException on worker ", ex.pid, ": ", ex.err, "\nRemote backtrace:", ex.bt, "\n")
 end
 
 function run_work_thunk(thunk, print_error)
@@ -892,7 +892,7 @@ end
 handle_msg(msg::CallMsg{:call}, r_stream, w_stream) = schedule_call(msg.response_oid, ()->msg.f(msg.args...))
 function handle_msg(msg::CallMsg{:call_fetch}, r_stream, w_stream)
     @schedule begin
-        v = run_work_thunk(()->msg.f(msg.args...))
+        v = run_work_thunk(()->msg.f(msg.args...), false)
         deliver_result(w_stream, :call_fetch, msg.response_oid, v)
     end
 end
@@ -904,7 +904,7 @@ function handle_msg(msg::CallWaitMsg, r_stream, w_stream)
     end
 end
 
-handle_msg(msg::RemoteDoMsg, r_stream, w_stream) = @schedule run_work_thunk(()->msg.f(msg.args...))
+handle_msg(msg::RemoteDoMsg, r_stream, w_stream) = @schedule run_work_thunk(()->msg.f(msg.args...), true)
 
 handle_msg(msg::ResultMsg, r_stream, w_stream) = put!(lookup_ref(msg.response_oid), msg.value)
 
@@ -1334,20 +1334,10 @@ end
 
 macro everywhere(ex)
     quote
-        errors = Exception[]
         @sync begin
             for w in PGRP.workers
-                @async begin
-                    try
-                        remotecall_fetch(w.id, ()->(eval(Main,$(Expr(:quote,ex))); nothing))
-                    catch err
-                        push!(errors, err)
-                    end
-                end
+                @async remotecall_fetch(w, ()->(eval(Main,$(Expr(:quote,ex))); nothing))
             end
-        end
-        if length(errors) > 0
-            throw(errors[1])
         end
     end
 end

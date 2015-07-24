@@ -322,18 +322,49 @@ end
 
 
 ## dynamically-scoped waiting for multiple items
+type ExceptionStore
+    ex
+    bt
+end
 
-sync_begin() = task_local_storage(:SPAWNS, ([], get(task_local_storage(), :SPAWNS, ())))
+type CompositeException
+    exceptions::Array{ExceptionStore,1}
+    CompositeException() = new(ExceptionStore[])
+end
+length(c::CompositeException) = length(c.exceptions)
+push!(c::CompositeException, ex, bt) = push!(c.exceptions, ExceptionStore(ex, bt))
+
+sync_begin() = task_local_storage(:SPAWNS, (([], CompositeException()), get(task_local_storage(), :SPAWNS, ())))
 
 function sync_end()
     spawns = get(task_local_storage(), :SPAWNS, ())
     if is(spawns,())
         error("sync_end() without sync_begin()")
     end
-    refs = spawns[1]
+    refs = spawns[1][1]
     task_local_storage(:SPAWNS, spawns[2])
+
+    c_ex = spawns[1][2]
     for r in refs
         wait(r)
+    end
+
+    if length(c_ex) > 0
+        throw(c_ex)
+    end
+    nothing
+end
+
+function show(io::IO, ex::CompositeException)
+    if length(ex) > 0
+        print(io, ex.exceptions[1].ex)
+        show_backtrace(io, ex.exceptions[1].bt)
+        remaining = length(ex) - 1
+        if remaining > 0
+            print(io, "\n\n...and $remaining other exceptions.\n")
+        end
+    else
+        print(io, "CompositeException()\n")
     end
 end
 
@@ -349,7 +380,7 @@ end
 function sync_add(r)
     spawns = get(task_local_storage(), :SPAWNS, ())
     if !is(spawns,())
-        push!(spawns[1], r)
+        push!(spawns[1][1], r)
     end
     r
 end
@@ -363,5 +394,25 @@ end
 
 macro async(expr)
     expr = localize_vars(:(()->($expr)), false)
-    :(async_run_thunk($(esc(expr))))
+    quote
+        spawns = get(task_local_storage(), :SPAWNS, ())
+        async_run_thunk (() -> begin
+            try
+                eval($(esc(expr)))()
+            catch async_ex
+                if !is(spawns,())
+                    bt=catch_backtrace()
+                        push!(spawns[1][2], async_ex, bt)
+                else
+                    rethrow(async_ex)
+                end
+            end
+        end)
+    end
 end
+
+
+# macro async_inner(expr)
+# #    expr = localize_vars(:(()->($expr)), false)
+#     :(async_run_thunk($(esc(expr))))
+# end
